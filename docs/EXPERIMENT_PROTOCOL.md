@@ -44,6 +44,7 @@ END30은 독립적인 전체 노출 task가 아니다. 각 행동이 발생한 �
 
 - Member 1/2/3/4는 각각 Like/Search/Follow/Share(`forward`)와 해당 행동의 END30 task를 함께 담당한다.
 - 각 담당자는 LightGCN, DeepFM, DCNv2, HyFormer를 모두 original/sampled 조건에서 실행한다.
+- 분담 기준은 task pair이며 baseline별 담당 분할은 하지 않는다.
 - Member별 config 파일의 공통 hyperparameter를 임의 변경하지 않는다.
 - 모델 변경은 `src/kuaisar_xtr/models.py`, 실행 변경은 담당 config에서만 한다.
 - 각자 `assignment_{behavior}__{behavior_end_30m}.json`과 필요한 `metrics.json`만 공유한다.

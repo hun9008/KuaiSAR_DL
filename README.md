@@ -9,6 +9,9 @@ KuaiSAR의 추천 노출 로그에서 CTR을 넘어 8개 XTR 태스크를 동일
 
 ## 최종 Task 정의 및 담당
 
+> **분할 기준은 baseline이 아니라 task다.** 네 명 모두 LightGCN, DeepFM, DCNv2,
+> HyFormer를 전부 실행하며, 각자에게 배정된 행동과 그 행동의 END 30만 담당한다.
+
 각 행동 task는 두 가지 예측으로 구성한다. 첫 번째는 해당 행동의 발생 확률이고,
 두 번째는 **그 행동이 발생한 시점으로부터 30분 뒤 END일 확률**이다.
 
@@ -113,14 +116,21 @@ python scripts/run_experiment.py \
 
 ## 5. 4인 분할 실행
 
-행동 예측과 그 행동 이후 END30 예측을 한 쌍으로 묶어 한 명이 전담한다. 각 담당자는 2 tasks × 4 baselines × 2 regimes = 16 runs를 동일 조건으로 실행한다. Share task의 원본 컬럼명과 내부 key는 `forward`다.
+행동 예측과 그 행동 이후 END30 예측을 한 쌍으로 묶어 한 명이 전담한다.
+baseline별 담당자는 따로 두지 않는다. 각 담당자는 자신의 task pair에 대해 네 baseline을
+모두 실행하므로 `2 tasks × 4 baselines × 2 regimes = 16 runs`를 수행한다.
+Share task의 원본 컬럼명과 내부 key는 `forward`다.
 
-| 담당 | 담당 Task | 실행 모델 | 명령 |
-|---|---|---|---|
-| Member 1 | Like + Like END30 (`like`, `like_end_30m`) | LightGCN, DeepFM, DCNv2, HyFormer | `CUDA_VISIBLE_DEVICES=0 ./run.sh member1 --device cuda:0 --resume` |
-| Member 2 | Search + Search END30 (`search`, `search_end_30m`) | LightGCN, DeepFM, DCNv2, HyFormer | `CUDA_VISIBLE_DEVICES=1 ./run.sh member2 --device cuda:0 --resume` |
-| Member 3 | Follow + Follow END30 (`follow`, `follow_end_30m`) | LightGCN, DeepFM, DCNv2, HyFormer | `CUDA_VISIBLE_DEVICES=2 ./run.sh member3 --device cuda:0 --resume` |
-| Member 4 | Share + Share END30 (`forward`, `forward_end_30m`) | LightGCN, DeepFM, DCNv2, HyFormer | `CUDA_VISIBLE_DEVICES=3 ./run.sh member4 --device cuda:0 --resume` |
+| 담당 | 담당 Task pair | 실행 명령 |
+|---|---|---|
+| Member 1 | Like + Like END30 (`like`, `like_end_30m`) | `CUDA_VISIBLE_DEVICES=0 ./run.sh member1 --device cuda:0 --resume` |
+| Member 2 | Search + Search END30 (`search`, `search_end_30m`) | `CUDA_VISIBLE_DEVICES=1 ./run.sh member2 --device cuda:0 --resume` |
+| Member 3 | Follow + Follow END30 (`follow`, `follow_end_30m`) | `CUDA_VISIBLE_DEVICES=2 ./run.sh member3 --device cuda:0 --resume` |
+| Member 4 | Share + Share END30 (`forward`, `forward_end_30m`) | `CUDA_VISIBLE_DEVICES=3 ./run.sh member4 --device cuda:0 --resume` |
+
+각 명령은 해당 task pair만 순회하며, 그 안에서 공통 baseline 네 개와 데이터 조건 두 개를
+실행한다. 따라서 Member 1이 LightGCN만 맡거나 Member 2가 DeepFM만 맡는 식의
+baseline 분할은 없다.
 
 `--resume`은 이미 `metrics.json`이 있는 run을 건너뛴다. 공유 스토리지에서는 각자 별도 branch/worktree를 쓰고 `runs/`는 Git에 올리지 않는다. 완료 후 결과만 집계한다.
 
