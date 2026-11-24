@@ -10,7 +10,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from .config import ExperimentConfig
-from .data import ParquetBatchDataset, load_data_spec, split_path
+from .data import ParquetBatchDataset, load_data_spec, load_lightgcn_graph, split_path
 from .models import build_model
 from .utils import atomic_json_dump, resolve_device, set_seed
 
@@ -40,10 +40,11 @@ def run_experiment(config: ExperimentConfig) -> dict:
     run_dir.mkdir(parents=True, exist_ok=True)
     atomic_json_dump(config.to_dict(), run_dir / "config.json")
 
+    effective_batch_size = config.lightgcn_batch_size if config.model.lower() == "lightgcn" else config.batch_size
     datasets = {
         split: ParquetBatchDataset(
             split_path(config.data_dir, config.regime, config.task, split), features,
-            config.task, config.batch_size, split == "train", config.seed,
+            config.task, effective_batch_size, split == "train", config.seed,
         )
         for split in ("train", "valid", "test")
     }
@@ -51,7 +52,21 @@ def run_experiment(config: ExperimentConfig) -> dict:
         split: DataLoader(ds, batch_size=None, num_workers=config.num_workers, pin_memory=device.type == "cuda")
         for split, ds in datasets.items()
     }
-    model = build_model(config.model, vocab_sizes, config.embedding_dim, config.hidden_dims).to(device)
+    graph_metadata = None
+    edge_users = edge_items = None
+    if config.model.lower() == "lightgcn":
+        edge_users, edge_items, graph_metadata = load_lightgcn_graph(config.data_dir, config.task)
+        if not edge_users.numel():
+            raise ValueError(f"LightGCN graph for {config.task} has no train-positive edges")
+    model = build_model(
+        config.model,
+        vocab_sizes,
+        config.embedding_dim,
+        config.hidden_dims,
+        edge_users=edge_users,
+        edge_items=edge_items,
+        lightgcn_layers=config.lightgcn_layers,
+    ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     criterion = nn.BCEWithLogitsLoss()
     best_auc, stale, history = -float("inf"), 0, []
@@ -94,6 +109,7 @@ def run_experiment(config: ExperimentConfig) -> dict:
         "run_name": run_name, "model": config.model, "task": config.task, "regime": config.regime,
         "seed": config.seed, "best_valid_auc": None if best_auc == -float("inf") else best_auc,
         **{f"test_{k}": v for k, v in test.items()}, "epochs_ran": len(history),
+        "lightgcn_graph": graph_metadata,
         "elapsed_seconds": round(time.time() - started, 3),
     }
     atomic_json_dump(result, run_dir / "metrics.json")

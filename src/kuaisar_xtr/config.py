@@ -20,6 +20,8 @@ class ExperimentConfig:
     learning_rate: float = 1e-3
     weight_decay: float = 1e-6
     embedding_dim: int = 32
+    lightgcn_layers: int = 2
+    lightgcn_batch_size: int = 65_536
     hidden_dims: tuple[int, ...] = (256, 128)
     num_workers: int = 2
     device: str = "auto"

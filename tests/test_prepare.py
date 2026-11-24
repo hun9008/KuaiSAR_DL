@@ -40,12 +40,18 @@ def test_prepare_dataset_end_to_end(tmp_path: Path) -> None:
     manifest = prepare_dataset(raw, output)
     assert (output / "original/train.parquet").exists()
     assert (output / "sampled_1_10/like/train.parquet").exists()
+    assert (output / "graphs/like.parquet").exists()
+    assert manifest["version"] == 2
+    assert manifest["id_mapping"]["hash_collisions"] is False
+    assert manifest["lightgcn_graphs"]["task_to_action"]["like_end_30m"] == "like"
     assert manifest["sampling"]["train_only"] is True
     assert set(manifest["tasks"]) == {
         "like", "search", "follow", "forward", "like_end_30m",
         "search_end_30m", "follow_end_30m", "forward_end_30m",
     }
     original = pd.read_parquet(output / "original/train.parquet")
+    assert original["user_id"].between(1, len(users)).all()
+    assert original["item_id"].between(1, len(items)).all()
     known_end = original["like_end_30m"].notna()
     assert known_end.any()
     assert (original.loc[known_end, "like"] == 1).all()
@@ -53,6 +59,9 @@ def test_prepare_dataset_end_to_end(tmp_path: Path) -> None:
     sampled = pd.read_parquet(output / "sampled_1_10/like/train.parquet")
     positives = int(sampled["like"].sum())
     assert len(sampled) - positives <= positives * 10
+    graph = pd.read_parquet(output / "graphs/like.parquet")
+    positive_pairs = original.loc[original["like"] == 1, ["user_id", "item_id"]].drop_duplicates()
+    assert set(map(tuple, graph.to_numpy())) == set(map(tuple, positive_pairs.to_numpy()))
     result = run_experiment(ExperimentConfig(
         model="lightgcn", task="like", data_dir=str(output),
         output_dir=str(tmp_path / "runs"), batch_size=16, epochs=1,

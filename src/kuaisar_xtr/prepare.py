@@ -5,7 +5,14 @@ from pathlib import Path
 
 import duckdb
 
-from .constants import ACTION_END_TASKS, CATEGORICAL_FEATURES, DEFAULT_HASH_BUCKETS, END_THRESHOLD_SECONDS, TASKS
+from .constants import (
+    ACTION_END_TASKS,
+    CATEGORICAL_FEATURES,
+    DEFAULT_HASH_BUCKETS,
+    END_THRESHOLD_SECONDS,
+    GRAPH_ACTION_FOR_TASK,
+    TASKS,
+)
 from .utils import atomic_json_dump
 
 
@@ -74,11 +81,22 @@ def prepare_dataset(
                    (PARTITION BY r.user_id ORDER BY CAST(r.time AS TIMESTAMP), r.item_id) AS next_event_time
         FROM rec r
     """)
+    # Collision-free, compact entity IDs are required for a real user-item graph.
+    con.execute("""
+        CREATE OR REPLACE TABLE user_id_map AS
+        SELECT user_id, row_number() OVER (ORDER BY user_id) AS graph_id
+        FROM (SELECT DISTINCT user_id FROM rec WHERE user_id IS NOT NULL)
+    """)
+    con.execute("""
+        CREATE OR REPLACE TABLE item_id_map AS
+        SELECT item_id, row_number() OVER (ORDER BY item_id) AS graph_id
+        FROM (SELECT DISTINCT item_id FROM rec WHERE item_id IS NOT NULL)
+    """)
     user_cols = ["onehot_feat1", "onehot_feat2", "search_active_level", "rec_active_level"]
     item_cols = ["first_level_category_name_en", "second_level_category_name_en", "item_type", "upload_type"]
     feature_exprs = [
-        f"{_hashed('t.user_id', DEFAULT_HASH_BUCKETS['user_id'])} AS user_id",
-        f"{_hashed('t.item_id', DEFAULT_HASH_BUCKETS['item_id'])} AS item_id",
+        "CAST(um.graph_id AS BIGINT) AS user_id",
+        "CAST(im.graph_id AS BIGINT) AS item_id",
     ]
     feature_exprs += [f"{_hashed('u.' + c, DEFAULT_HASH_BUCKETS[c])} AS {c}" for c in user_cols]
     feature_exprs += [f"{_hashed('i.' + c, DEFAULT_HASH_BUCKETS[c])} AS {c}" for c in item_cols]
@@ -96,8 +114,10 @@ def prepare_dataset(
         CREATE OR REPLACE TABLE examples AS
         SELECT {', '.join(feature_exprs + action_exprs + end_exprs)}, t.event_time
         FROM timed t
-        LEFT JOIN users u USING (user_id)
-        LEFT JOIN items i USING (item_id)
+        JOIN user_id_map um ON t.user_id = um.user_id
+        JOIN item_id_map im ON t.item_id = im.item_id
+        LEFT JOIN users u ON t.user_id = u.user_id
+        LEFT JOIN items i ON t.item_id = i.item_id
     """)
     train_cut, valid_cut = con.execute(
         "SELECT quantile_cont(event_time, ?), quantile_cont(event_time, ?) FROM examples",
@@ -116,6 +136,26 @@ def prepare_dataset(
         (output_dir / "original").mkdir(exist_ok=True)
         query = f"COPY (SELECT {selected_columns} FROM examples WHERE {predicate}) TO '{path}' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 100000)"
         con.execute(query, split_args[split])
+    graph_dir = output_dir / "graphs"
+    graph_dir.mkdir(exist_ok=True)
+    graph_stats = {}
+    for action in ("like", "search", "follow", "forward"):
+        dest = _q(graph_dir / f"{action}.parquet")
+        action_id = _ident(action)
+        con.execute(f"""
+            COPY (
+                SELECT DISTINCT user_id, item_id
+                FROM examples
+                WHERE event_time < ? AND {action_id} = 1
+            ) TO '{dest}' (FORMAT PARQUET, COMPRESSION ZSTD)
+        """, [train_cut])
+        graph_stats[action] = {
+            "path": f"graphs/{action}.parquet",
+            "edges": int(con.execute(
+                f"SELECT count(*) FROM (SELECT DISTINCT user_id, item_id FROM examples WHERE event_time < ? AND {action_id}=1)",
+                [train_cut],
+            ).fetchone()[0]),
+        }
     # Balanced variants reuse untouched validation/test sets; only training is sampled.
     for task in TASKS:
         task_dir = output_dir / "sampled_1_10" / task
@@ -144,8 +184,11 @@ def prepare_dataset(
             task_id = _ident(task)
             n, pos = con.execute(f"SELECT count({task_id}), sum({task_id}) FROM examples WHERE {predicate}", split_args[split]).fetchone()
             stats[task][split] = {"rows": int(n or 0), "positive": int(pos or 0), "positive_rate": float(pos / n) if n else None}
+    num_users = int(con.execute("SELECT count(*) FROM user_id_map").fetchone()[0])
+    num_items = int(con.execute("SELECT count(*) FROM item_id_map").fetchone()[0])
+    vocab_sizes = {**DEFAULT_HASH_BUCKETS, "user_id": num_users, "item_id": num_items}
     manifest = {
-        "version": 1, "features": CATEGORICAL_FEATURES, "vocab_sizes": DEFAULT_HASH_BUCKETS,
+        "version": 2, "features": CATEGORICAL_FEATURES, "vocab_sizes": vocab_sizes,
         "tasks": list(TASKS),
         "end_definition": {
             "threshold_seconds": END_THRESHOLD_SECONDS,
@@ -154,6 +197,12 @@ def prepare_dataset(
         },
         "split": {"method": "global_time", "train_cut": str(train_cut), "valid_cut": str(valid_cut)},
         "sampling": {"method": "deterministic_hash_rank", "negative_ratio": negative_ratio, "train_only": True},
+        "id_mapping": {"method": "contiguous_full_corpus_entities", "padding_id": 0, "hash_collisions": False},
+        "lightgcn_graphs": {
+            "definition": "distinct positive action edges from train split only",
+            "task_to_action": GRAPH_ACTION_FOR_TASK,
+            "actions": graph_stats,
+        },
         "stats": stats,
     }
     atomic_json_dump(manifest, output_dir / "manifest.json")

@@ -10,6 +10,10 @@ ACTION_END_TASKS = {
     "like_end_30m": "like", "search_end_30m": "search",
     "follow_end_30m": "follow", "forward_end_30m": "forward",
 }
+GRAPH_ACTION_FOR_TASK = {
+    "like": "like", "search": "search", "follow": "follow", "forward": "forward",
+    **ACTION_END_TASKS,
+}
 END_THRESHOLD_SECONDS = 1_800
 
 # Post-interaction signals (playing_time, duration_ms) are intentionally excluded:

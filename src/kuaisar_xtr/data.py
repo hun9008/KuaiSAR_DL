@@ -57,6 +57,24 @@ def load_data_spec(data_dir: str | Path) -> tuple[list[str], list[int]]:
     return features, vocab_sizes
 
 
+def load_lightgcn_graph(data_dir: str | Path, task: str) -> tuple[torch.Tensor, torch.Tensor, dict]:
+    root = Path(data_dir)
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    graph_spec = manifest.get("lightgcn_graphs")
+    if not graph_spec:
+        raise ValueError("Dataset has no LightGCN graph metadata; rerun data preparation")
+    try:
+        action = graph_spec["task_to_action"][task]
+        action_spec = graph_spec["actions"][action]
+    except KeyError as exc:
+        raise ValueError(f"No LightGCN graph is defined for task {task}") from exc
+    path = root / action_spec["path"]
+    table = pq.read_table(path, columns=["user_id", "item_id"])
+    users = torch.from_numpy(table["user_id"].to_numpy(zero_copy_only=False).astype(np.int64, copy=True))
+    items = torch.from_numpy(table["item_id"].to_numpy(zero_copy_only=False).astype(np.int64, copy=True))
+    return users, items, {"action": action, "path": str(path), "edges": int(len(users))}
+
+
 def split_path(data_dir: str | Path, regime: str, task: str, split: str) -> Path:
     root = Path(data_dir)
     if regime == "sampled_1_10" and split == "train":

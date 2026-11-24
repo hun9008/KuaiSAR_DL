@@ -34,7 +34,7 @@ Share 컬럼명이 `forward`이므로 코드와 설정에서도 같은 이름을
 |---|---|
 | Task | `like`, `like_end_30m`, `search`, `search_end_30m`, `follow`, `follow_end_30m`, `forward`, `forward_end_30m` |
 | Dataset regime | `original`, `sampled_1_10` |
-| Model | LightGCN lane, DeepFM, DCNv2, HyFormer |
+| Model | LightGCN, DeepFM, DCNv2, HyFormer |
 | Loss | BCEWithLogitsLoss |
 | Metric | AUC (primary), LogLoss (secondary) |
 | Split | 전역 event time 기준 80/10/10 |
@@ -85,6 +85,11 @@ data/raw/KuaiSAR_v2/
 ```text
 data/processed/
 ├── manifest.json                 # split, label 비율, vocab, sampling 기록
+├── graphs/                      # train positive edge로만 만든 LightGCN graph
+│   ├── like.parquet
+│   ├── search.parquet
+│   ├── follow.parquet
+│   └── forward.parquet
 ├── original/
 │   ├── train.parquet
 │   ├── valid.parquet
@@ -93,7 +98,7 @@ data/processed/
     └── {task}/train.parquet      # task별 train negative만 최대 1:10
 ```
 
-`valid`와 `test`는 두 regime 모두 원본 분포를 공유한다. 따라서 sampling 효과를 실제 분포에서 공정하게 비교할 수 있다. 같은 seed에서는 hash-rank 기반으로 정확히 같은 표본을 만든다.
+`valid`와 `test`는 두 regime 모두 원본 분포를 공유한다. 따라서 sampling 효과를 실제 분포에서 공정하게 비교할 수 있다. 같은 seed에서는 hash-rank 기반으로 정확히 같은 표본을 만든다. user/item ID는 hash collision이 없는 contiguous ID로 변환하고, 나머지 categorical feature만 deterministic hash를 사용한다.
 
 기존 출력 덮어쓰기가 필요할 때만 `--overwrite`를 명시한다.
 
@@ -156,14 +161,22 @@ docs/                    # 실험 규약과 협업 기준
 reports/                 # 기존 EDA/분석 산출물
 scripts/                 # prepare, single run, assignment, aggregate CLI
 src/kuaisar_xtr/
-├── prepare.py           # join, END, temporal split, exact sampling
-├── data.py              # row-group streaming loader
-├── models.py            # four shared-interface baselines
+├── prepare.py           # join, END, temporal split, sampling, train graph
+├── data.py              # row-group streaming loader, graph loader
+├── models.py            # LightGCN propagation + three context baselines
 ├── trainer.py           # early stop, checkpoint, AUC/LogLoss
 └── config.py            # serializable experiment config
 tests/
 ```
 
-### LightGCN lane 해석
+### LightGCN graph 정의
 
-대규모 그래프 전체 전파를 mini-batch마다 반복하지 않도록 현재 lane은 LightGCN의 layer-0 ID embedding dot-product를 사용한다. 즉, 그래프 전파 전 collaborative-filtering lower bound다. 보고서에서는 `LightGCN-0`으로 표기해야 하며, full-graph LightGCN 결과와 혼동하지 않는다. 나머지 모델은 공통 categorical context 전체를 사용한다.
+LightGCN은 ID dot-product만 사용하는 대체 구현이 아니라 정규화된 user-item bipartite graph에서 기본 2-layer propagation을 수행한다. layer 0과 각 propagation layer embedding의 평균을 user/item 표현으로 사용하고 dot product logit을 BCE로 학습한다.
+
+- graph는 전체 데이터가 아니라 **train split의 positive action edge**로만 만든다.
+- Like/Like END30은 like graph, Search/Search END30은 search graph를 공유하며 Follow과 Share도 같은 규칙을 적용한다.
+- END30=1 여부를 graph edge 선정에 사용하지 않아 target leakage를 막는다.
+- validation/test interaction은 graph를 갱신하지 않는다.
+- LightGCN은 user/item ID만 사용하는 graph CF baseline이고, DeepFM/DCNv2/HyFormer는 공통 categorical context를 사용한다.
+
+기본은 `lightgcn_layers=2`, LightGCN 전용 row batch는 `lightgcn_batch_size=65536`이다. graph 전파 메모리가 부족하면 담당 config에서 LightGCN batch size만 낮추고 기록한다.

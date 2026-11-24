@@ -4,7 +4,7 @@
 
 1. 모든 모델은 같은 `data/processed/manifest.json`으로 생성된 split을 사용한다.
 2. split은 random row split이 아니라 event time 80/10/10이다.
-3. categorical 값은 DuckDB의 deterministic hash로 인코딩하며 0은 missing/padding이다.
+3. user/item은 collision 없는 contiguous ID, 나머지 categorical 값은 deterministic hash로 인코딩하며 0은 missing/padding이다.
 4. `sampled_1_10`은 train negative만 task별 최대 positive의 10배로 제한한다.
 5. validation/test는 항상 original distribution이다.
 6. validation AUC로 early stopping하고 best checkpoint에서 test AUC/LogLoss를 한 번 계산한다.
@@ -30,6 +30,15 @@ END30은 독립적인 전체 노출 task가 아니다. 각 행동이 발생한 �
 허용: user/item ID, user profile categorical 4개, item category/type 4개, event hour/day-of-week.
 
 금지: 현재 interaction의 `duration_ms`, `playing_time`, 모든 target action, 미래 interaction에서 파생한 feature. END label 계산을 위한 `next_event_time`도 feature로 저장하지 않는다.
+
+## LightGCN policy
+
+- train split의 distinct positive action user-item edge만 graph에 포함한다.
+- behavior task와 해당 behavior END30 task는 같은 action graph를 공유한다.
+- END30 label은 graph edge 구성에 사용하지 않는다.
+- validation/test edge는 graph에 포함하지 않는다.
+- degree-normalized bipartite propagation 2 layer와 layer-wise mean을 사용한다.
+- LightGCN은 ID-only baseline이며 context feature를 입력하지 않는다.
 
 ## 결과 제출 체크리스트
 
