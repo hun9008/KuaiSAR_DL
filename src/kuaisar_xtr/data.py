@@ -14,10 +14,20 @@ from torch.utils.data import IterableDataset, get_worker_info
 class ParquetBatchDataset(IterableDataset):
     """Row-group sharded iterable dataset that does not load the corpus in RAM."""
 
-    def __init__(self, path: str | Path, features: list[str], label: str, batch_size: int, shuffle: bool, seed: int):
+    def __init__(
+        self,
+        path: str | Path,
+        features: list[str],
+        label: str,
+        batch_size: int,
+        shuffle: bool,
+        seed: int,
+        drop_singleton: bool = False,
+    ):
         super().__init__()
         self.path, self.features, self.label = Path(path), features, label
         self.batch_size, self.shuffle, self.seed = batch_size, shuffle, seed
+        self.drop_singleton = drop_singleton
         self.epoch = 0
         parquet = pq.ParquetFile(self.path)
         self.row_groups = list(range(parquet.metadata.num_row_groups))
@@ -44,6 +54,11 @@ class ParquetBatchDataset(IterableDataset):
                 frame = batch.to_pandas()
                 frame = frame[frame[self.label].notna()]
                 if frame.empty:
+                    continue
+                # BatchNorm-based baselines cannot estimate training statistics
+                # from a single row. Evaluation keeps singleton batches because
+                # BatchNorm uses its stored running statistics in eval mode.
+                if self.drop_singleton and len(frame) == 1:
                     continue
                 x = frame[self.features].to_numpy(dtype=np.int64, copy=True)
                 y = frame[self.label].to_numpy(dtype=np.float32, copy=True)

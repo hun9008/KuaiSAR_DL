@@ -45,6 +45,7 @@ def run_experiment(config: ExperimentConfig) -> dict:
         split: ParquetBatchDataset(
             split_path(config.data_dir, config.regime, config.task, split), features,
             config.task, effective_batch_size, split == "train", config.seed,
+            drop_singleton=split == "train",
         )
         for split in ("train", "valid", "test")
     }
@@ -67,6 +68,11 @@ def run_experiment(config: ExperimentConfig) -> dict:
         edge_items=edge_items,
         lightgcn_layers=config.lightgcn_layers,
     ).to(device)
+    print(
+        f"[START] model={config.model} task={config.task} regime={config.regime} "
+        f"device={device} train_batch_size={effective_batch_size}",
+        flush=True,
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     criterion = nn.BCEWithLogitsLoss()
     best_auc, stale, history = -float("inf"), 0, []
@@ -92,6 +98,12 @@ def run_experiment(config: ExperimentConfig) -> dict:
         record = {"epoch": epoch, "train_rows": total_rows, "train_loss": total_loss / max(total_rows, 1), **{f"valid_{k}": v for k, v in valid.items()}}
         history.append(record)
         atomic_json_dump(history, run_dir / "history.json")
+        print(
+            f"[EPOCH {epoch}/{config.epochs}] model={config.model} task={config.task} "
+            f"regime={config.regime} train_loss={record['train_loss']:.6f} "
+            f"valid_auc={valid['auc']} valid_logloss={valid['logloss']}",
+            flush=True,
+        )
         score = valid["auc"] if valid["auc"] is not None else -float("inf")
         if score > best_auc:
             best_auc, stale = score, 0
@@ -113,4 +125,10 @@ def run_experiment(config: ExperimentConfig) -> dict:
         "elapsed_seconds": round(time.time() - started, 3),
     }
     atomic_json_dump(result, run_dir / "metrics.json")
+    print(
+        f"[DONE] model={config.model} task={config.task} regime={config.regime} "
+        f"test_auc={result['test_auc']} test_logloss={result['test_logloss']} "
+        f"elapsed_seconds={result['elapsed_seconds']}",
+        flush=True,
+    )
     return result

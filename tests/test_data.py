@@ -18,3 +18,16 @@ def test_parquet_dataset_filters_unknown_labels(tmp_path: Path) -> None:
 def test_sampled_regime_only_changes_train_path(tmp_path: Path) -> None:
     assert split_path(tmp_path, "sampled_1_10", "like", "train") == tmp_path / "sampled_1_10/like/train.parquet"
     assert split_path(tmp_path, "sampled_1_10", "like", "valid") == tmp_path / "original/valid.parquet"
+
+
+def test_training_drops_only_singleton_batches(tmp_path: Path) -> None:
+    path = tmp_path / "singleton.parquet"
+    pq.write_table(pa.table({"a": [1, 2, 3], "label": [1, 0, 1]}), path)
+    train = ParquetBatchDataset(
+        path, ["a"], "label", batch_size=2, shuffle=False, seed=1, drop_singleton=True,
+    )
+    evaluation = ParquetBatchDataset(
+        path, ["a"], "label", batch_size=2, shuffle=False, seed=1, drop_singleton=False,
+    )
+    assert [len(y) for _, y in train] == [2]
+    assert [len(y) for _, y in evaluation] == [2, 1]
