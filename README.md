@@ -6,6 +6,7 @@ KuaiSAR의 추천 노출 로그에서 CTR을 넘어 8개 XTR 태스크를 동일
 - XTR 후보 정리: [reports/XTR_candidate.md](reports/XTR_candidate.md)
 - END 근거 자료: [reports/시간별 END 전이 분석.pdf](reports/시간별%20END%20전이%20분석.pdf)
 - 상세 실험 규약: [docs/EXPERIMENT_PROTOCOL.md](docs/EXPERIMENT_PROTOCOL.md)
+- 실험 결과 Leaderboard: [LEADERBOARD.md](LEADERBOARD.md)
 
 ## 최종 Task 정의 및 담당
 
