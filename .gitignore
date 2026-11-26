@@ -14,3 +14,4 @@ artifacts/
 runs/
 *.log
 requirements_hou27.txt
+*.pid

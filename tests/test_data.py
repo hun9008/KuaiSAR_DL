@@ -32,3 +32,21 @@ def test_train_shuffle_mixes_rows_within_row_group(tmp_path: Path) -> None:
     assert [y.tolist() for _, y in dataset] == [y.tolist() for y in batches]  # deterministic per epoch
     unshuffled = [y for _, y in ParquetBatchDataset(path, ["a"], "forward", 100, shuffle=False, seed=42)]
     assert float(unshuffled[-1].mean()) == 1.0
+
+
+def test_sparse_labels_fill_full_batches_across_row_groups(tmp_path: Path) -> None:
+    # END30-like column: only every 10th row is labeled, split over several row groups.
+    path = tmp_path / "sparse.parquet"
+    labels = [(i // 10) % 2 if i % 10 == 0 else None for i in range(1010)]
+    pq.write_table(pa.table({"a": list(range(1010)), "forward_end_30m": labels}), path, row_group_size=100)
+    train = [y for _, y in ParquetBatchDataset(path, ["a"], "forward_end_30m", 8, shuffle=True, seed=1)]
+    assert [len(y) for y in train] == [8] * 12 + [5]  # 101 labeled rows, carried over row groups
+    evaluation = [y for _, y in ParquetBatchDataset(path, ["a"], "forward_end_30m", 50, shuffle=False, seed=1)]
+    assert [len(y) for y in evaluation] == [50, 50, 1]  # evaluation keeps every labeled row
+
+
+def test_training_drops_single_row_remainder(tmp_path: Path) -> None:
+    path = tmp_path / "remainder.parquet"
+    pq.write_table(pa.table({"a": list(range(9)), "forward": [0, 1] * 4 + [1]}), path)
+    train = [y for _, y in ParquetBatchDataset(path, ["a"], "forward", 4, shuffle=True, seed=1)]
+    assert [len(y) for y in train] == [4, 4]
