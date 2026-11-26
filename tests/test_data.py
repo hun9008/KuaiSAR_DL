@@ -18,3 +18,17 @@ def test_parquet_dataset_filters_unknown_labels(tmp_path: Path) -> None:
 def test_sampled_regime_only_changes_train_path(tmp_path: Path) -> None:
     assert split_path(tmp_path, "sampled_1_10", "like", "train") == tmp_path / "sampled_1_10/like/train.parquet"
     assert split_path(tmp_path, "sampled_1_10", "like", "valid") == tmp_path / "original/valid.parquet"
+
+
+def test_train_shuffle_mixes_rows_within_row_group(tmp_path: Path) -> None:
+    # Label-sorted file with a single row group mimics the class-partitioned sampled output.
+    path = tmp_path / "sorted.parquet"
+    labels = [0] * 900 + [1] * 100
+    pq.write_table(pa.table({"a": list(range(1000)), "forward": labels}), path, row_group_size=1000)
+    dataset = ParquetBatchDataset(path, ["a"], "forward", batch_size=100, shuffle=True, seed=42)
+    batches = [y for _, y in dataset]
+    assert sum(float(y.sum()) for y in batches) == 100
+    assert max(float(y.mean()) for y in batches) < 1.0
+    assert [y.tolist() for _, y in dataset] == [y.tolist() for y in batches]  # deterministic per epoch
+    unshuffled = [y for _, y in ParquetBatchDataset(path, ["a"], "forward", 100, shuffle=False, seed=42)]
+    assert float(unshuffled[-1].mean()) == 1.0

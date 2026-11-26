@@ -40,6 +40,10 @@ class ParquetBatchDataset(IterableDataset):
         columns = self.features + [self.label]
         for group in groups:
             table = parquet.read_row_group(group, columns=columns)
+            if self.shuffle:
+                # Row-group order alone keeps on-disk ordering inside each batch.
+                rng = np.random.default_rng([self.seed, self.epoch, group])
+                table = table.take(rng.permutation(table.num_rows))
             for batch in table.to_batches(max_chunksize=self.batch_size):
                 frame = batch.to_pandas()
                 frame = frame[frame[self.label].notna()]

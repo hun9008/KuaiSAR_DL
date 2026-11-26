@@ -59,6 +59,9 @@ def test_prepare_dataset_end_to_end(tmp_path: Path) -> None:
     sampled = pd.read_parquet(output / "sampled_1_10/like/train.parquet")
     positives = int(sampled["like"].sum())
     assert len(sampled) - positives <= positives * 10
+    # Sampled rows must not be stored grouped by label (single-class batches).
+    label_order = sampled["like"].tolist()
+    assert label_order != sorted(label_order) and label_order != sorted(label_order, reverse=True)
     graph = pd.read_parquet(output / "graphs/like.parquet")
     positive_pairs = original.loc[original["like"] == 1, ["user_id", "item_id"]].drop_duplicates()
     assert set(map(tuple, graph.to_numpy())) == set(map(tuple, positive_pairs.to_numpy()))
