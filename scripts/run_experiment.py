@@ -12,7 +12,10 @@ from kuaisar_xtr.trainer import run_experiment
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run one KuaiSAR XTR experiment")
     parser.add_argument("--config", required=True)
-    parser.add_argument("--model", choices=["lightgcn", "deepfm", "dcnv2", "hyformer"])
+    parser.add_argument(
+        "--model",
+        choices=["lightgcn", "deepfm", "dcnv2", "field_transformer", "hyformer"],
+    )
     parser.add_argument("--task")
     parser.add_argument("--regime", choices=["original", "sampled_1_10"])
     parser.add_argument("--device")

@@ -33,10 +33,12 @@ Share 컬럼명이 `forward`이므로 코드와 설정에서도 같은 이름을
 |---|---|
 | Task | `like`, `like_end_30m`, `search`, `search_end_30m`, `follow`, `follow_end_30m`, `forward`, `forward_end_30m` |
 | Dataset regime | `original`, `sampled_1_10` |
-| Model | LightGCN, DeepFM, DCNv2, HyFormer |
+| Model | LightGCN, DeepFM, DCNv2, FieldTransformer |
 | Loss | BCEWithLogitsLoss |
 | Metric | AUC (primary), LogLoss (secondary) |
 | Split | 전역 event time 기준 80/10/10 |
+
+기존에 `HyFormer`로 표기했던 정적 field-token Transformer는 실제 KDD sequence HyFormer와 구분하기 위해 `FieldTransformer`(`field_transformer`)로 이름을 바로잡았다. `src/kuaisar_xtr/model/hyformer.py`에는 KDD 구현과 동일한 `PCVRHyFormer`가 있으며, sequence domain 전처리와 `ModelInput` 연결이 확정되기 전까지 기존 4인 assignment matrix에는 포함하지 않는다.
 
 행동별 END30 라벨은 해당 행동이 발생한 행에서만 정의한다. 예를 들어 `like_end_30m`은 `like=1` 이후 같은 사용자의 다음 추천 이벤트까지 30분을 초과하면 1이다. 행동이 발생하지 않은 행과 사용자별 마지막 이벤트는 정답 불명으로 END30 학습·평가에서 제외한다. `duration_ms`, `playing_time`은 노출 후 관측되는 값이라 입력 feature에서 제외한다.
 
@@ -176,6 +178,6 @@ LightGCN은 ID dot-product만 사용하는 대체 구현이 아니라 정규화�
 - Like/Like END30은 like graph, Search/Search END30은 search graph를 공유하며 Follow과 Share도 같은 규칙을 적용한다.
 - END30=1 여부를 graph edge 선정에 사용하지 않아 target leakage를 막는다.
 - validation/test interaction은 graph를 갱신하지 않는다.
-- LightGCN은 user/item ID만 사용하는 graph CF baseline이고, DeepFM/DCNv2/HyFormer는 공통 categorical context를 사용한다.
+- LightGCN은 user/item ID만 사용하는 graph CF baseline이고, DeepFM/DCNv2/FieldTransformer는 공통 categorical context를 사용한다. KDD 구조의 HyFormer는 정적 context와 별도로 sequence 입력을 요구한다.
 
 기본은 `lightgcn_layers=2`, LightGCN 전용 row batch는 `lightgcn_batch_size=65536`이다. graph 전파 메모리가 부족하면 담당 config에서 LightGCN batch size만 낮추고 기록한다.

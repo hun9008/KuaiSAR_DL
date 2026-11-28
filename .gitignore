@@ -15,3 +15,5 @@ runs/
 *.log
 requirements_hou27.txt
 *.pid
+# Local reference repository/symlink; never include it in this project.
+/KDD_submission

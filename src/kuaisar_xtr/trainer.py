@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 
 from .config import ExperimentConfig
 from .data import ParquetBatchDataset, load_data_spec, load_lightgcn_graph, split_path
-from .models import build_model
+from .model import build_model
 from .utils import atomic_json_dump, resolve_device, set_seed
 
 
