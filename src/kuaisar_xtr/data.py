@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Iterator
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import torch
 from torch.utils.data import IterableDataset, get_worker_info
@@ -48,25 +50,32 @@ class ParquetBatchDataset(IterableDataset):
             groups = groups[worker.id :: worker.num_workers]
         parquet = pq.ParquetFile(self.path)
         columns = self.features + [self.label]
+        # Unknown labels are dropped before batching and rows carry over across row
+        # groups, so sparse labels (END30 on the original split) still form full
+        # batch_size batches instead of tiny, sometimes single-row, ones.
+        pending: pa.Table | None = None
         for group in groups:
             table = parquet.read_row_group(group, columns=columns)
+            table = table.filter(pc.is_valid(table[self.label]))
+            if table.num_rows == 0:
+                continue
             if self.shuffle:
                 # Row-group order alone keeps on-disk ordering inside each batch.
                 rng = np.random.default_rng([self.seed, self.epoch, group])
                 table = table.take(rng.permutation(table.num_rows))
-            for batch in table.to_batches(max_chunksize=self.batch_size):
-                frame = batch.to_pandas()
-                frame = frame[frame[self.label].notna()]
-                if frame.empty:
-                    continue
-                # BatchNorm-based baselines cannot estimate training statistics
-                # from a single row. Evaluation keeps singleton batches because
-                # BatchNorm uses its stored running statistics in eval mode.
-                if self.drop_singleton and len(frame) == 1:
-                    continue
-                x = frame[self.features].to_numpy(dtype=np.int64, copy=True)
-                y = frame[self.label].to_numpy(dtype=np.float32, copy=True)
-                yield torch.from_numpy(x), torch.from_numpy(y)
+            pending = table if pending is None else pa.concat_tables([pending, table])
+            while pending.num_rows >= self.batch_size:
+                yield self._to_tensors(pending.slice(0, self.batch_size))
+                pending = pending.slice(self.batch_size)
+        # A single-row training batch breaks BatchNorm; evaluation keeps every row.
+        if pending is not None and pending.num_rows and (not self.shuffle or pending.num_rows > 1):
+            yield self._to_tensors(pending)
+
+    def _to_tensors(self, table: pa.Table) -> tuple[torch.Tensor, torch.Tensor]:
+        frame = table.to_pandas()
+        x = frame[self.features].to_numpy(dtype=np.int64, copy=True)
+        y = frame[self.label].to_numpy(dtype=np.float32, copy=True)
+        return torch.from_numpy(x), torch.from_numpy(y)
 
 
 def load_data_spec(data_dir: str | Path) -> tuple[list[str], list[int]]:
