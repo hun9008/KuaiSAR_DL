@@ -20,14 +20,15 @@ def test_sampled_regime_only_changes_train_path(tmp_path: Path) -> None:
     assert split_path(tmp_path, "sampled_1_10", "like", "valid") == tmp_path / "original/valid.parquet"
 
 
-def test_training_drops_only_singleton_batches(tmp_path: Path) -> None:
-    path = tmp_path / "singleton.parquet"
-    pq.write_table(pa.table({"a": [1, 2, 3], "label": [1, 0, 1]}), path)
-    train = ParquetBatchDataset(
-        path, ["a"], "label", batch_size=2, shuffle=False, seed=1, drop_singleton=True,
-    )
-    evaluation = ParquetBatchDataset(
-        path, ["a"], "label", batch_size=2, shuffle=False, seed=1, drop_singleton=False,
-    )
-    assert [len(y) for _, y in train] == [2]
-    assert [len(y) for _, y in evaluation] == [2, 1]
+def test_train_shuffle_mixes_rows_within_row_group(tmp_path: Path) -> None:
+    # Label-sorted file with a single row group mimics the class-partitioned sampled output.
+    path = tmp_path / "sorted.parquet"
+    labels = [0] * 900 + [1] * 100
+    pq.write_table(pa.table({"a": list(range(1000)), "forward": labels}), path, row_group_size=1000)
+    dataset = ParquetBatchDataset(path, ["a"], "forward", batch_size=100, shuffle=True, seed=42)
+    batches = [y for _, y in dataset]
+    assert sum(float(y.sum()) for y in batches) == 100
+    assert max(float(y.mean()) for y in batches) < 1.0
+    assert [y.tolist() for _, y in dataset] == [y.tolist() for y in batches]  # deterministic per epoch
+    unshuffled = [y for _, y in ParquetBatchDataset(path, ["a"], "forward", 100, shuffle=False, seed=42)]
+    assert float(unshuffled[-1].mean()) == 1.0

@@ -175,6 +175,9 @@ def prepare_dataset(
                 )
                 SELECT {selected_columns} FROM ranked
                 WHERE {task_id}=1 OR class_rank <= {negative_ratio} * positive_count
+                -- The class-partitioned window emits rows grouped by label; without a
+                -- deterministic shuffle, row groups (and batches) become single-class.
+                ORDER BY hash(user_id, item_id, event_time, {seed}, 'row_order')
             ) TO '{dest}' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 100000)
         """, [train_cut])
     stats = {}
@@ -196,7 +199,10 @@ def prepare_dataset(
             "terminal_event_label": "unknown",
         },
         "split": {"method": "global_time", "train_cut": str(train_cut), "valid_cut": str(valid_cut)},
-        "sampling": {"method": "deterministic_hash_rank", "negative_ratio": negative_ratio, "train_only": True},
+        "sampling": {
+            "method": "deterministic_hash_rank", "negative_ratio": negative_ratio, "train_only": True,
+            "row_order": "deterministic_hash_shuffle",
+        },
         "id_mapping": {"method": "contiguous_full_corpus_entities", "padding_id": 0, "hash_collisions": False},
         "lightgcn_graphs": {
             "definition": "distinct positive action edges from train split only",

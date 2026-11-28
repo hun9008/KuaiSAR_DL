@@ -13,3 +13,4 @@ data/downloads/
 artifacts/
 runs/
 *.log
+requirements_hou27.txt
